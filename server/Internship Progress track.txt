@@ -1,0 +1,71 @@
+Day 1)
+i) Installation of React native, node.js, Android Studois with SDK
+ii) What react, Why do we use it when we had JS already.
+iii) Functional based components Vs Class based components
+vi) Arrow function, normal function, Var, Const, Let difference
+Extra: Why doesn't const let us reassign value to variable but in Array or objects
+and what if i dont wanna let it reassgin in the objects or array (using freeze, deepfreeze)
+
+Day 2)
+i) Hoisting (in depth interview questions that how does it work internally)
+ii) Make a to-do application using React native.
+
+Day 3) Build app using professional UI with full features and functionalities (Didn't Finished).
+
+- MERN Switch \*
+
+- ReactJS (FrontEnd)
+
+Day 4) Build To-Do list web app using the React JS (Same did with ReactNative) , use of Formik & Yup, TailWind CSS.
+
+Day 5) 2 different pages using Routing, Features: Keep track of numbers of task and catagories, 3 different sections for different functions.
+
+Day 6) useEffect hooks, DummyJSON API data fetch in useEffect, Context API
+
+Day 7) Redux ToolKit, MongoDB (Installation, Basic Insert Create & Update Operations Self study)
+    
+Day 8) AsyncThrunk (Taking Arg) , ExtraReducer,
+
+Day 9) Persist and rehydrate, useMemo, useCallback. useNavigate, URL data transfer between components using: useLocation, useRefer
+
+
+- NodeJS (BackEnd)
+
+Day 10) i) Starting with BackEnd - NodeJs basics, need?, why is it faster, why needed, Features and functionalities, alternatives
+        ii) Modules, architecture, URL patterns (Already Covered in ReactJs), HTTP server request methods (PUT,GET, Delete, ...), What is REST API,
+        iii) ExpressJS - What is it, and how used
+        vi) Important: Middleware concepts and basic creating and calls
+
+
+Important Note: All further dev is done using Express.js only as it is framework which uses Node.JS under the hood and it is scalable
+
+Day 11) (Saturday) (FrontEnd)
+        i) Lodash library for filtering the lists on search
+        ii) react-toastify, react-hot-toast
+
+        (BackEnd)
+        i) Mongoose, mongoDB revision and practice for query writing, simple project for API calls and data storage
+
+Day 12) Starting with JWT, building server, connecting it to the frontend, Some tutorials from Piyush garg and CodeHelp 
+
+Day 13) finishing simple login authentication using simple login sign up with mongoDB storing and connecting front with backend,
+        project insight from devs working projects like how to follow MVC, some real life concepts, SMTP, FireBase uses, Some middlewares,
+        learn about EmailJS, NodeMailer for OTP varification for checking is user valid or Note,
+        
+Day 14) What are WebSockets, What are Streams, What is cluster module, and practical implementation with small codes from PiyushGarg (Youtube Channel) and ChatGpt
+        
+Day 15) 
+
+
+
+
+
+
+
+
+
+
+
+
+
+MongoDB passward: 1xHhDFUuj87QxoLl
