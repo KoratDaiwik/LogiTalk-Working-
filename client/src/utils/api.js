@@ -1,13 +1,13 @@
-// ⚙️ api.js
 import axios from "axios";
 
 const api = axios.create({
-  baseURL: "/api/users",
-  withCredentials: true, // ← ensure cookies (refresh token) are sent
+  baseURL: "http://localhost:5000/api",
+  withCredentials: true,
 });
 
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem("token"); // unified key “token”
+  // you stored it under "accessToken"
+  const token = localStorage.getItem("accessToken");
   if (token) {
     config.headers = config.headers || {};
     config.headers.Authorization = `Bearer ${token}`;

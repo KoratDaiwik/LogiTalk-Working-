@@ -37,7 +37,7 @@ const Navbar = ({ onUserSelect }) => {
     }
     debounceRef.current = setTimeout(() => {
       api
-        .get(`/search?query=${encodeURIComponent(searchTerm)}`, {
+        .get(`/users/search?query=${encodeURIComponent(searchTerm)}`, {
           headers: {
             Authorization: `Bearer ${accessToken}`,
           },

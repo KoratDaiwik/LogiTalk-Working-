@@ -20,7 +20,7 @@ export default function Login() {
     setError("");
     setLoading(true);
     try {
-      const res = await api.post("/login", form);
+      const res = await api.post("/users/login", form);
       if (res.data.success && res.data.accessToken) {
         // PASS THE TOKEN INTO YOUR CONTEXT
         await login(res.data.accessToken);

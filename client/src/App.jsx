@@ -13,6 +13,8 @@ import Login from "./Authentication/Login";
 import Signup from "./Authentication/Signup";
 import VerifyOtp from "./Authentication/VerifyOtp";
 import Chat from "./pages/Chatpage";
+import SelectAvatarPage from "./pages/SelectAvatarPage";
+
 
 export default function App() {
   const location = useLocation();
@@ -40,6 +42,7 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
         <Route path="/verify-otp" element={<VerifyOtp />} />
+        <Route path="/select-avatar" element={<SelectAvatarPage />} />
         <Route path="/chat" element={<Chat />} />
       </Routes>
     </AnimatePresence>

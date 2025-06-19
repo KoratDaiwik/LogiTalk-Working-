@@ -9,7 +9,7 @@ const User = require("../models/userModel");
  * each with the other user’s info, last message, timestamp, unread count.
  */
 exports.getChatList = async (req, res) => {
-  const me = mongoose.Types.ObjectId(req.user.userId);
+  const me = new mongoose.Types.ObjectId(req.user.userId);
 
   try {
     const chats = await Message.aggregate([
@@ -162,6 +162,7 @@ exports.startChat = async (req, res) => {
         avatar: user.avatar,
         lastMessage: "",
         timestamp: Date.now(),
+        unreadCount: 0,
       },
     });
   } catch (err) {

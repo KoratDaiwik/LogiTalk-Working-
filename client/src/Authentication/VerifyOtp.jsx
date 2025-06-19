@@ -24,10 +24,10 @@ export default function VerifyOtp() {
     setLoading(true);
 
     try {
-      const res = await api.post("/verify-otp", { email, otp });
+      const res = await api.post("/users/verify-otp", { email, otp });
       if (res.data.success) {
         localStorage.setItem("accessToken", res.data.accessToken);
-        navigate("/chat");
+        navigate("/select-avatar");
       } else {
         setError(res.data.message);
       }

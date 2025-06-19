@@ -196,18 +196,24 @@ exports.deleteUser = async (req, res) => {
   }
 };
 
+// GET /api/users/search?query=...
 exports.searchUsers = async (req, res) => {
-  const { query } = req.query;
-  if (!query?.trim())
-    return res.status(400).json({ success: false, message: "Invalid query" });
+  const me = req.user.userId; // logged-in user ID
+  const query = req.query.query;
+
+  if (!query?.trim()) {
+    return res.json({ success: true, users: [] });
+  }
 
   try {
     const users = await User.find({
+      _id: { $ne: me }, // ← exclude current user
       name: { $regex: query, $options: "i" },
-    }).select("_id name email avatar about");
+    }).select("_id name avatar");
+
     return res.json({ success: true, users });
   } catch (err) {
-    console.error("searchUsers error:", err);
+    console.error("User search error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
   }
 };

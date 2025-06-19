@@ -19,7 +19,7 @@ export default function Signup() {
     setLoading(true);
 
     try {
-      const res = await api.post("/register", form);
+      const res = await api.post("/users/register", form);
       if (res.data.success) {
         navigate("/verify-otp", {
           state: { name: form.name, email: form.email },
