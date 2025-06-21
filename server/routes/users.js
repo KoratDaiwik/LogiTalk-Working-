@@ -4,6 +4,7 @@ const auth = require("../middleware/auth");
 const ctrl = require("../Controller/userController");
 const fs = require("fs");
 const path = require("path");
+const userCtrl = require("../Controller/userController");
 
 
 router.get("/avatars", async (req, res) => {
@@ -44,6 +45,7 @@ router.post("/login", ctrl.login);
 router.post("/token", ctrl.refreshToken);
 router.get("/search", auth, ctrl.searchUsers);
 router.get("/profile", auth, ctrl.getProfile);
+router.get("/:id", auth, ctrl.getUserById);
 router.delete("/delete", auth, ctrl.deleteUser);
-
+router.put("/about", auth, userCtrl.updateAbout);
 module.exports = router;

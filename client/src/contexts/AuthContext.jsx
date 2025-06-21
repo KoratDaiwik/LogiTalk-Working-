@@ -1,3 +1,4 @@
+// src/contexts/AuthContext.jsx
 import React, {
   createContext,
   useContext,
@@ -6,7 +7,7 @@ import React, {
   useCallback,
 } from "react";
 import { useNavigate } from "react-router-dom";
-import { jwtDecode } from "jwt-decode";
+import {jwtDecode} from "jwt-decode";
 import api from "../utils/api";
 
 const AuthContext = createContext();
@@ -14,11 +15,13 @@ const AuthContext = createContext();
 export const AuthProvider = ({ children }) => {
   const navigate = useNavigate();
 
-  // Load token from localStorage if present
-  const [token, setToken] = useState(() => localStorage.getItem("token"));
+  // Load accessToken from localStorage if present
+  const [accessToken, setAccessToken] = useState(() =>
+    localStorage.getItem("accessToken")
+  );
   const [currentUser, setCurrentUser] = useState(null);
 
-  // Decode & validate
+  // Decode & validate token
   const decodeAndSetUser = useCallback((t) => {
     try {
       const { exp, userId, email } = jwtDecode(t);
@@ -30,12 +33,12 @@ export const AuthProvider = ({ children }) => {
     }
   }, []);
 
-  // login(token): store + set state + decode
+  // login(accessToken): store + set state + decode
   const login = useCallback(
-    (newToken) => {
-      localStorage.setItem("token", newToken);
-      setToken(newToken);
-      if (!decodeAndSetUser(newToken)) {
+    (newAccessToken) => {
+      localStorage.setItem("accessToken", newAccessToken);
+      setAccessToken(newAccessToken);
+      if (!decodeAndSetUser(newAccessToken)) {
         logout();
       }
     },
@@ -44,24 +47,24 @@ export const AuthProvider = ({ children }) => {
 
   // logout
   const logout = useCallback(() => {
-    localStorage.removeItem("token");
-    setToken(null);
+    localStorage.removeItem("accessToken");
+    setAccessToken(null);
     setCurrentUser(null);
     navigate("/login", { replace: true });
   }, [navigate]);
 
-  // keep user in sync
+  // Keep user in sync on load or token change
   useEffect(() => {
-    if (token) {
-      if (!decodeAndSetUser(token)) {
+    if (accessToken) {
+      if (!decodeAndSetUser(accessToken)) {
         logout();
       }
     } else {
       setCurrentUser(null);
     }
-  }, [token, decodeAndSetUser, logout]);
+  }, [accessToken, decodeAndSetUser, logout]);
 
-  // Refresh‐on‐401 logic
+  // Refresh-on-401 logic
   useEffect(() => {
     let isRefreshing = false;
     let queue = [];
@@ -76,8 +79,8 @@ export const AuthProvider = ({ children }) => {
 
     const reqI = api.interceptors.request.use(
       (cfg) => {
-        if (token) {
-          cfg.headers.Authorization = `Bearer ${token}`;
+        if (accessToken) {
+          cfg.headers.Authorization = `Bearer ${accessToken}`;
         }
         return cfg;
       },
@@ -100,7 +103,7 @@ export const AuthProvider = ({ children }) => {
           }
           isRefreshing = true;
           try {
-            const r = await api.post("/token"); // withCredentials:true will send refresh cookie
+            const r = await api.post("/users/token"); // ↔ correct endpoint
             if (r.data.accessToken) {
               login(r.data.accessToken);
               processQueue(null, r.data.accessToken);
@@ -123,10 +126,12 @@ export const AuthProvider = ({ children }) => {
       api.interceptors.request.eject(reqI);
       api.interceptors.response.eject(resI);
     };
-  }, [token, login, logout]);
+  }, [accessToken, login, logout]);
 
   return (
-    <AuthContext.Provider value={{ currentUser, login, logout, token }}>
+    <AuthContext.Provider
+      value={{ currentUser, accessToken, login, logout }}
+    >
       {children}
     </AuthContext.Provider>
   );

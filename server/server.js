@@ -1,3 +1,4 @@
+// server.js
 require("dotenv").config();
 const express = require("express");
 const http = require("http");
@@ -7,16 +8,17 @@ const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const path = require("path");
 
+// Correctly import your MongoDB connect function once:
 const connectDB = require("./models/db");
-const userRoutes = require("./routes/users");
-const chatRoutes = require("./routes/chatRoutes");
-const profileRoutes = require("./routes/profileRoutes");  // <-- new
-const User = require("./models/userModel");
-const Message = require("./models/message");
+
+const userRoutes    = require("./routes/users");
+const chatRoutes    = require("./routes/chatRoutes");
+const profileRoutes = require("./routes/profileRoutes");
+const Message       = require("./models/message");
 
 const app = express();
 
-// CORS & JSON
+// CORS & JSON parsing
 app.use(
   cors({
     origin: "http://localhost:5173",
@@ -30,9 +32,9 @@ app.use(cookieParser());
 connectDB();
 
 // --- API ROUTES --- //
-app.use("/api/users", userRoutes);
-app.use("/api/chats", chatRoutes);
-app.use("/api/profile", profileRoutes);  // <-- new
+app.use("/api/users",   userRoutes);
+app.use("/api/chats",   chatRoutes);
+app.use("/api/profile", profileRoutes);
 
 // Serve avatar images statically
 app.use(
@@ -53,12 +55,11 @@ const io = socketio(server, {
 // Track online users
 const onlineUsers = new Map();
 
-// Socket.io JWT Authentication
-io.use(async (socket, next) => {
+// Socket.io JWT Authentication middleware
+io.use((socket, next) => {
   try {
     const token = socket.handshake.auth.token;
     if (!token) throw new Error("Missing token");
-
     const payload = jwt.verify(token, process.env.JWT_SECRET);
     socket.userId = payload.userId;
     next();
@@ -71,36 +72,38 @@ io.use(async (socket, next) => {
 io.on("connection", (socket) => {
   console.log("✅ Socket connected:", socket.userId);
 
-  // Add to online users
+  // Join user-specific room and broadcast online status
+  socket.join(socket.userId);
   onlineUsers.set(socket.userId, socket.id);
   io.emit("userOnline", socket.userId);
 
-  // Send online users list
+  // Provide list of online users
   socket.on("getOnlineUsers", () => {
     socket.emit("onlineUsers", Array.from(onlineUsers.keys()));
   });
 
-  // Handle sending messages
+  // Handle incoming chat messages
   socket.on("sendMessage", async ({ to, text }) => {
     const from = socket.userId;
     if (!to || !text?.trim()) return;
 
     try {
       const message = new Message({
-        sender: from,
+        sender:   from,
         receiver: to,
-        text: text.trim(),
+        text:     text.trim(),
       });
       await message.save();
 
       const payload = {
-        _id: message._id,
-        sender: message.sender,
-        receiver: message.receiver,
-        text: message.text,
+        _id:       message._id,
+        sender:    message.sender,
+        receiver:  message.receiver,
+        text:      message.text,
         timestamp: message.timestamp,
       };
 
+      // Emit to sender and receiver
       io.to(from).emit("newMessage", payload);
       io.to(to).emit("newMessage", payload);
     } catch (err) {
@@ -116,8 +119,8 @@ io.on("connection", (socket) => {
   });
 });
 
-// Start server
+// Start HTTP + Socket.IO server
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () =>
-  console.log(`🚀 Server running on port ${PORT}`)
-);
+server.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});

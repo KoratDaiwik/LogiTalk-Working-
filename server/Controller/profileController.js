@@ -8,20 +8,21 @@ const URL_PREFIX = "/assets/avatars/";
 
 exports.getAvatars = async (req, res) => {
   try {
-    // Read all filenames (we assume they're named "1.jpg", "2.png", etc.)
+    console.log("GET /api/profile/avatars called");
     const files = await fs.promises.readdir(AVATAR_DIR);
-    // Extract numeric IDs from filenames, e.g. "1.jpg" -> 1
+    console.log("Avatar files in folder:", files);
     const ids = files
       .map(f => parseInt(f, 10))
       .filter(n => !isNaN(n))
       .sort((a, b) => a - b);
-
+    console.log("Parsed avatar IDs:", ids);
     res.json({ avatars: ids });
   } catch (err) {
-    console.error("getAvatars:", err);
+    console.error("getAvatars error:", err);
     res.status(500).json({ message: "Unable to load avatars." });
   }
 };
+
 
 exports.setAvatar = async (req, res) => {
   try {
