@@ -1,3 +1,4 @@
+// src/components/UserProfile.jsx
 import React from "react";
 
 const UserProfile = ({ selectedChat }) => {
@@ -18,7 +19,10 @@ const UserProfile = ({ selectedChat }) => {
           className="w-16 h-16 rounded-full mb-2"
         />
         <div className="font-semibold text-lg">{selectedChat.name}</div>
-        <div className="text-sm text-green-500">Online</div>
+        {/* Display online status dynamically */}
+        <div className={`text-sm ${selectedChat.isOnline ? 'text-green-500' : 'text-gray-500'}`}>
+          {selectedChat.isOnline ? 'Online' : 'Offline'}
+        </div>
       </div>
 
       <div className="mt-4">

@@ -1,37 +1,25 @@
-// src/Controller/chatController.js
 const mongoose = require("mongoose");
 const Message = require("../models/message");
 const User = require("../models/userModel");
 
-/**
- * GET /api/chats
- * Returns a list of all chats for the logged-in user,
- * each with the other user’s info, last message, timestamp, unread count.
- */
 exports.getChatList = async (req, res) => {
   const me = new mongoose.Types.ObjectId(req.user.userId);
 
   try {
     const chats = await Message.aggregate([
-      // Only messages where I'm sender or receiver
       { $match: { $or: [{ sender: me }, { receiver: me }] } },
-
-      // Sort newest first
       { $sort: { timestamp: -1 } },
-
-      // Group by the *other* user
       {
         $group: {
           _id: {
             $cond: [
               { $eq: ["$sender", me] },
-              "$receiver", // if I sent it, group by receiver
-              "$sender", // if I received it, group by sender
+              "$receiver",
+              "$sender",
             ],
           },
           lastMessage: { $first: "$text" },
           timestamp: { $first: "$timestamp" },
-          // Count unread where I'm the receiver and read === false
           unreadCount: {
             $sum: {
               $cond: [
@@ -43,10 +31,9 @@ exports.getChatList = async (req, res) => {
               ],
             },
           },
+          lastMessageId: { $first: "$_id" },
         },
       },
-
-      // Bring in the user document for the other participant
       {
         $lookup: {
           from: "users",
@@ -56,8 +43,6 @@ exports.getChatList = async (req, res) => {
         },
       },
       { $unwind: "$user" },
-
-      // Project into the shape frontend expects
       {
         $project: {
           _id: 0,
@@ -67,10 +52,9 @@ exports.getChatList = async (req, res) => {
           lastMessage: 1,
           timestamp: 1,
           unreadCount: 1,
+          lastMessageId: 1,
         },
       },
-
-      // Finally sort chats by most recent
       { $sort: { timestamp: -1 } },
     ]);
 
@@ -81,10 +65,6 @@ exports.getChatList = async (req, res) => {
   }
 };
 
-/**
- * GET /api/chats/:userId
- * Returns the full message history between me and that user.
- */
 exports.getMessagesWithUser = async (req, res) => {
   const me = req.user.userId;
   const otherId = req.params.userId;
@@ -96,7 +76,6 @@ exports.getMessagesWithUser = async (req, res) => {
   }
 
   try {
-    // Ensure the other user exists
     const other = await User.findById(otherId).select("_id name avatar");
     if (!other) {
       return res
@@ -104,7 +83,6 @@ exports.getMessagesWithUser = async (req, res) => {
         .json({ success: false, message: "User not found" });
     }
 
-    // Fetch bidirectional messages
     const rawMsgs = await Message.find({
       $or: [
         { sender: me, receiver: otherId },
@@ -114,13 +92,13 @@ exports.getMessagesWithUser = async (req, res) => {
       .sort({ timestamp: 1 })
       .lean();
 
-    // Map to front‑end shape including `read`
     const messages = rawMsgs.map((msg) => ({
       _id: msg._id,
       text: msg.text,
-      sender: msg.sender.toString() === me ? "me" : otherId,
+      sender: msg.sender.toString(),
+      receiver: msg.receiver.toString(),
       timestamp: msg.timestamp,
-      read: msg.read, // ← include read flag
+      read: msg.read,
     }));
 
     return res.json({ success: true, messages });
@@ -129,10 +107,7 @@ exports.getMessagesWithUser = async (req, res) => {
     return res.status(500).json({ success: false, message: "Server error" });
   }
 };
-/**
- * POST /api/chats/start
- * Returns a chat descriptor for a new chat (no DB record needed).
- */
+
 exports.startChat = async (req, res) => {
   const fromUserId = req.user.userId;
   const { userId: toUserId } = req.body;
@@ -171,10 +146,6 @@ exports.startChat = async (req, res) => {
   }
 };
 
-/**
- * POST /api/chats/:userId/message
- * Stores a new message and returns it.
- */
 exports.sendMessage = async (req, res) => {
   const from = req.user.userId;
   const to = req.params.userId;
@@ -192,14 +163,15 @@ exports.sendMessage = async (req, res) => {
     });
     await message.save();
 
+    // Populate sender info for real-time update
+    const sender = await User.findById(from).select("name avatar");
+
     return res.json({
       success: true,
       message: {
-        _id: message._id,
-        text: message.text,
-        sender: from,
-        receiver: to,
-        timestamp: message.timestamp,
+        ...message.toObject(),
+        senderName: sender.name,
+        senderAvatar: sender.avatar,
       },
     });
   } catch (err) {
@@ -208,10 +180,6 @@ exports.sendMessage = async (req, res) => {
   }
 };
 
-/**
- * POST /api/chats/:userId/read
- * Marks all messages from that user to me as read.
- */
 exports.markAsRead = async (req, res) => {
   const me = req.user.userId;
   const otherId = req.params.userId;

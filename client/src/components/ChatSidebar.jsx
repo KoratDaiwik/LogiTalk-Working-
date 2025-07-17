@@ -1,11 +1,13 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 
 const ChatSidebar = ({ chatList = [], onSelectChat }) => {
   const [searchTerm, setSearchTerm] = useState("");
 
-  const filteredChats = chatList.filter((chat) =>
-    chat.name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredChats = useMemo(() => {
+    return chatList.filter(chat => 
+      chat.name.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  }, [chatList, searchTerm]);
 
   return (
     <div className="w-[22%] border-r p-4 bg-white overflow-y-auto">
@@ -40,7 +42,9 @@ const ChatSidebar = ({ chatList = [], onSelectChat }) => {
           filteredChats.map((chat) => (
             <div
               key={chat.userId}
-              className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-lg cursor-pointer transition-colors duration-200"
+              className={`flex items-center justify-between p-3 hover:bg-gray-50 rounded-lg cursor-pointer transition-colors duration-200 ${
+                chat.unreadCount > 0 ? "bg-blue-50" : ""
+              }`}
               onClick={() => onSelectChat(chat)}
             >
               <div className="flex items-center space-x-3 min-w-0">
