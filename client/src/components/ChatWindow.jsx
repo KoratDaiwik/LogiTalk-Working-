@@ -3,15 +3,28 @@ import React, { useState, useEffect, useRef } from "react";
 const ChatWindow = ({ selectedChat, onSendMessage }) => {
   const [text, setText] = useState("");
   const endRef = useRef(null);
+  const textareaRef = useRef(null);
 
+  // Auto-scroll to bottom
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [selectedChat?.messages]);
 
+  // Auto-resize textarea
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+      textareaRef.current.style.height = `${Math.min(
+        textareaRef.current.scrollHeight,
+        150
+      )}px`;
+    }
+  }, [text]);
+
   if (!selectedChat) {
     return (
       <div className="flex-1 flex items-center justify-center text-gray-400">
-        Select a chat
+        Select a chat to start messaging
       </div>
     );
   }
@@ -22,7 +35,7 @@ const ChatWindow = ({ selectedChat, onSendMessage }) => {
       <div className="border-b p-4 bg-white flex items-center space-x-3">
         <img
           src={selectedChat.avatar || "/default-avatar.png"}
-          alt=""
+          alt={selectedChat.name}
           className="w-10 h-10 rounded-full"
         />
         <div>
@@ -38,42 +51,42 @@ const ChatWindow = ({ selectedChat, onSendMessage }) => {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 p-4 overflow-y-auto">
+      <div className="flex-1 p-4 overflow-y-auto flex flex-col">
         {selectedChat.messages.map(msg => (
           <div
             key={msg._id}
-            className={`flex my-1 ${
+            className={`flex my-2 ${
               msg.sender === "me" ? "justify-end" : "justify-start"
             }`}
           >
             <div
-              className={`p-3 rounded-xl max-w-[75%] ${
+              className={`max-w-[80%] rounded-2xl px-4 py-2 ${
                 msg.sender === "me"
-                  ? "bg-green-100 rounded-tr-none"
-                  : "bg-white rounded-tl-none border"
+                  ? "bg-green-100 rounded-br-none"
+                  : "bg-white rounded-bl-none border"
               }`}
             >
-              <div className="flex items-end">
-                <span className="text-gray-800">{msg.text}</span>
+              <div className="text-gray-800 break-words">{msg.text}</div>
+              <div className="flex justify-end mt-1">
+                <span className="text-xs text-gray-500">
+                  {new Date(msg.timestamp).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </span>
                 {msg.sender === "me" && (
                   <span
-                    className={`ml-2 text-xs whitespace-nowrap ${
-                      !msg.delivered
-                        ? "text-gray-400" // ✓
-                        : msg.read
-                        ? "text-blue-500" // ✓✓ blue
-                        : "text-gray-500" // ✓✓ gray
+                    className={`ml-2 text-xs ${
+                      msg.read 
+                        ? "text-blue-500" 
+                        : msg.delivered 
+                          ? "text-gray-500" 
+                          : "text-gray-400"
                     }`}
                   >
-                    {msg.delivered ? "✓✓" : "✓"}
+                    {msg.read ? "✓✓ Read" : msg.delivered ? "✓✓ Delivered" : "✓ Sent"}
                   </span>
                 )}
-              </div>
-              <div className="text-xs text-gray-500 mt-1 text-right">
-                {new Date(msg.timestamp).toLocaleTimeString([], {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}
               </div>
             </div>
           </div>
@@ -82,8 +95,9 @@ const ChatWindow = ({ selectedChat, onSendMessage }) => {
       </div>
 
       {/* Input */}
-      <div className="border-t p-3 bg-white flex space-x-2">
+      <div className="border-t p-3 bg-white flex items-end space-x-2">
         <textarea
+          ref={textareaRef}
           rows={1}
           value={text}
           onChange={e => setText(e.target.value)}
@@ -96,8 +110,8 @@ const ChatWindow = ({ selectedChat, onSendMessage }) => {
               }
             }
           }}
-          placeholder="Type a message…"
-          className="flex-1 p-2 border rounded-lg focus:border-green-500"
+          placeholder="Type a message..."
+          className="flex-1 p-2 border rounded-lg focus:border-green-500 resize-none max-h-32"
         />
         <button
           onClick={() => {

@@ -72,48 +72,42 @@ io.on("connection", (socket) => {
     socket.emit("onlineUsers", Array.from(onlineUsers.keys()));
   });
 
-  socket.on("sendMessage", async ({ to, text }) => {
-    const from = socket.userId;
-    if (!to || !text?.trim()) return;
+  socket.on("sendMessage", async ({ to, text }, callback) => {
+  const from = socket.userId;
+  if (!to || !text?.trim()) return callback({ error: "Invalid input" });
 
-    try {
-      const message = new Message({
-        sender: from,
-        receiver: to,
-        text: text.trim(),
-      });
-      await message.save();
+  try {
+    // Create and save message
+    const message = new Message({ sender: from, receiver: to, text: text.trim() });
+    await message.save();
 
-      // Get sender info
-      const sender = await User.findById(from).select("name avatar");
+    // Get sender info
+    const sender = await User.findById(from).select("name avatar");
+    const payload = { ...message.toObject(), senderName: sender.name, senderAvatar: sender.avatar };
 
-      const payload = {
-        ...message.toObject(),
-        senderName: sender.name,
-        senderAvatar: sender.avatar,
-      };
+    // Deliver message
+    const isReceiverOnline = onlineUsers.has(to);
+    io.to(from).to(to).emit("newMessage", payload);
 
-      // Emit to sender and receiver with sender info
-      io.to(from).emit("newMessage", payload);
-      io.to(to).emit("newMessage", payload);
-      
-      // Update chat lists
-      io.to(from).emit("updateChatList", {
-        userId: to,
-        lastMessage: text,
-        timestamp: message.timestamp,
-      });
-      
-      io.to(to).emit("updateChatList", {
-        userId: from,
-        lastMessage: text,
-        timestamp: message.timestamp,
-        unreadCount: onlineUsers.has(to) ? 0 : 1
-      });
-    } catch (err) {
-      console.error("Error saving message:", err);
+    // Update chat lists
+    const updateData = {
+      userId: from === socket.userId ? to : from,
+      lastMessage: text,
+      timestamp: message.timestamp,
+      unreadCount: isReceiverOnline ? 0 : 1
+    };
+
+    io.to(from).emit("updateChatList", { ...updateData, unreadCount: 0 });
+    if (isReceiverOnline) {
+      io.to(to).emit("updateChatList", updateData);
     }
-  });
+
+    callback({ success: true });
+  } catch (err) {
+    console.error("Error saving message:", err);
+    callback({ success: false, error: "Message send failed" });
+  }
+});
 
   socket.on("markAsRead", async (otherId) => {
     try {

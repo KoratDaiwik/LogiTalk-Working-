@@ -24,63 +24,29 @@ exports.getAvatars = async (req, res) => {
 };
 
 
+// profileController.js
 exports.setAvatar = async (req, res) => {
   try {
     const userId = req.user.userId;
     const { avatarId } = req.body;
-
-    if (typeof avatarId !== "number") {
-      return res.status(400).json({ message: "avatarId (number) is required" });
+    
+    // Validate avatar exists
+    const avatarPath = path.join(AVATAR_DIR, `${avatarId}.jpg`);
+    if (!fs.existsSync(avatarPath)) {
+      return res.status(404).json({ message: "Avatar not found" });
     }
 
-    // Build the filename and URL:
-    const filename = `${avatarId}`; // e.g. "3"
-    // You can store just the ID or the URL. Here we store the ID.
+    const avatarUrl = `${URL_PREFIX}${avatarId}.jpg`;
     const user = await User.findByIdAndUpdate(
       userId,
-      { avatar: avatarId },
+      { avatar: avatarUrl },
       { new: true }
     );
 
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    // Respond with the full URL so frontend can show it immediately:
-    const avatarUrl = `${req.protocol}://${req.get("host")}${URL_PREFIX}${filename}`;
-    return res.json({ success: true, avatarUrl });
-  } catch (err) {
-    console.error("setAvatar:", err);
-    res.status(500).json({ message: "Internal Server Error" });
-  }
-};
-
-exports.setAvatar = async (req, res) => {
-  try {
-    const userId = req.user.userId;
-    const { avatarId } = req.body;
-    if (typeof avatarId !== "number") {
-      return res.status(400).json({ message: "avatarId (number) is required" });
-    }
-
-    // Build the full URL, e.g. http://localhost:5000/assets/avatars/3.jpg
-    const filename = `${avatarId}.jpg`;           // adjust ext if needed
-    const fullUrl = `${req.protocol}://${req.get("host")}${URL_PREFIX}${filename}`;
-
-    const user = await User.findByIdAndUpdate(
-      userId,
-      { avatar: fullUrl },                        // save the URL
-      { new: true }
-    );
-
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    return res.json({ success: true, avatarUrl: fullUrl });
+    res.json({ success: true, avatarUrl });
   } catch (err) {
     console.error("setAvatar error:", err);
-    return res.status(500).json({ message: "Internal Server Error" });
+    res.status(500).json({ message: "Internal Server Error" });
   }
 };
 

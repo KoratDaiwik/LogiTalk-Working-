@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "../contexts/AuthContext";
-import { connectSocket } from "../utils/socket";
+import { connectSocket, getSocket, disconnectSocket } from "../utils/socket";
 import * as svc from "../services/chatService";
 import api from "../utils/api";
 
@@ -16,140 +16,270 @@ const ChatPage = () => {
   const [onlineUsers, setOnlineUsers] = useState(new Set());
   const socketRef = useRef();
   const openChatRef = useRef(null);
+  const tmpMessageMap = useRef(new Map()); // Track temporary messages
 
-  // 1️⃣ Load chat heads
+  // Load chat list
   useEffect(() => {
-    svc.fetchChatList()
-      .then(r => r.data.success && setChatList(r.data.chats))
-      .catch(console.error);
+    const loadChats = async () => {
+      try {
+        const res = await svc.fetchChatList();
+        if (res.data.success) {
+          setChatList(res.data.chats);
+        }
+      } catch (error) {
+        console.error("Failed to load chat list:", error);
+      }
+    };
+    
+    loadChats();
   }, []);
 
-  // 2️⃣ Initialize socket & handlers
+  // Initialize socket
   useEffect(() => {
     if (!accessToken) return;
     
     const socket = connectSocket(accessToken);
     socketRef.current = socket;
 
-    // On any message (incoming or echo)
+    // Handle new messages
     const handleNewMessage = (msg) => {
-      const isMe = String(msg.sender) === String(currentUser.userId);
+      const isMe = msg.sender.toString() === currentUser.userId;
       const otherId = isMe ? msg.receiver : msg.sender;
-      const isOpen = openChatRef.current === otherId;
+      const isOpen = openChatRef.current === otherId.toString();
+
+      // Skip duplicate for sender (optimistic update already shown)
+      if (isMe && msg.tmpId && tmpMessageMap.current.has(msg.tmpId)) {
+        // Update temporary message with real ID and delivery status
+        setSelectedChat(prev => {
+          if (!prev || prev.userId.toString() !== otherId.toString()) return prev;
+          
+          return {
+            ...prev,
+            messages: prev.messages.map(m => 
+              m._id === msg.tmpId 
+                ? { 
+                    ...m, 
+                    _id: msg._id, 
+                    delivered: true,
+                    read: msg.read || false,
+                    timestamp: msg.timestamp
+                  } 
+                : m
+            )
+          };
+        });
+        
+        // Remove from temporary map
+        tmpMessageMap.current.delete(msg.tmpId);
+        return;
+      }
 
       // Update chat list
       setChatList(prev => {
-        const existingChat = prev.find(c => c.userId === otherId);
-        if (existingChat) {
-          return prev.map(c => 
-            c.userId === otherId 
-              ? { 
-                  ...c, 
-                  lastMessage: msg.text,
-                  timestamp: msg.timestamp,
-                  unreadCount: isOpen ? 0 : (isMe ? 0 : (c.unreadCount || 0) + 1)
-                } 
-              : c
-          );
+        const newList = [...prev];
+        const chatIndex = newList.findIndex(c => c.userId.toString() === otherId.toString());
+        
+        if (chatIndex !== -1) {
+          newList[chatIndex] = {
+            ...newList[chatIndex],
+            lastMessage: msg.text,
+            timestamp: msg.timestamp,
+            unreadCount: isOpen ? 0 : (isMe ? 0 : (newList[chatIndex].unreadCount || 0) + 1)
+          };
+          
+          // Move to top
+          const [updatedChat] = newList.splice(chatIndex, 1);
+          newList.unshift(updatedChat);
+        } else {
+          // Create new chat entry
+          newList.unshift({
+            userId: otherId,
+            name: msg.senderName || "Unknown",
+            avatar: msg.senderAvatar || "",
+            lastMessage: msg.text,
+            timestamp: msg.timestamp,
+            unreadCount: isMe ? 0 : 1,
+            isOnline: onlineUsers.has(otherId.toString())
+          });
         }
         
-        // New chat - need to fetch user info
-        return prev;
+        return newList;
       });
 
-      // If this chat is open, append to window
+      // Update chat window if open
       if (isOpen) {
-        setSelectedChat(prev => ({
-          ...prev,
-          messages: [
-            ...prev.messages,
-            {
-              _id: msg._id,
-              text: msg.text,
-              timestamp: msg.timestamp,
-              delivered: true,
-              read: msg.read || false,
-              sender: isMe ? "me" : "them",
-            },
-          ],
-        }));
-        
+        setSelectedChat(prev => {
+          if (!prev || prev.userId.toString() !== otherId.toString()) return prev;
+          
+          // Check if message already exists
+          const exists = prev.messages.some(m => m._id === msg._id || m._id === msg.tmpId);
+          if (exists) return prev;
+          
+          return {
+            ...prev,
+            messages: [
+              ...prev.messages,
+              {
+                _id: msg._id,
+                text: msg.text,
+                timestamp: msg.timestamp,
+                delivered: true,
+                read: msg.read || false,
+                sender: isMe ? "me" : "them",
+              }
+            ]
+          };
+        });
+
         // Mark as read if from them
-        if (!isMe) svc.markAsRead(otherId).catch(console.error);
+        if (!isMe) {
+          svc.markAsRead(otherId).catch(console.error);
+        }
       }
     };
 
-    socket.on("newMessage", handleNewMessage);
+    // Handle message delivery confirmation
+    const handleMessageDelivered = (messageId) => {
+      setSelectedChat(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          messages: prev.messages.map(msg => 
+            msg._id === messageId ? { ...msg, delivered: true } : msg
+          )
+        };
+      });
+    };
 
-    // Presence
-    socket.on("onlineUsers", list => setOnlineUsers(new Set(list)));
-    socket.on("userOnline", u => setOnlineUsers(prev => new Set(prev).add(u)));
-    socket.on("userOffline", u =>
+    // Handle message read confirmation
+    const handleMessagesRead = ({ readerId }) => {
+      if (readerId === openChatRef.current) {
+        setSelectedChat(prev => ({
+          ...prev,
+          messages: prev.messages.map(msg => ({
+            ...msg,
+            read: true
+          }))
+        }));
+      }
+    };
+
+    // Handle online status changes
+    const handleOnlineUsers = (users) => {
+      setOnlineUsers(new Set(users));
+    };
+
+    const handleUserOnline = (userId) => {
+      setOnlineUsers(prev => new Set(prev).add(userId));
+      updateChatOnlineStatus(userId, true);
+    };
+
+    const handleUserOffline = (userId) => {
       setOnlineUsers(prev => {
-        const nxt = new Set(prev);
-        nxt.delete(u);
-        return nxt;
-      })
-    );
+        const newSet = new Set(prev);
+        newSet.delete(userId);
+        return newSet;
+      });
+      updateChatOnlineStatus(userId, false);
+    };
 
+    // Update online status in chat list
+    const updateChatOnlineStatus = (userId, isOnline) => {
+      setChatList(prev => 
+        prev.map(chat => 
+          chat.userId.toString() === userId.toString()
+            ? { ...chat, isOnline }
+            : chat
+        )
+      );
+      
+      if (selectedChat && selectedChat.userId.toString() === userId.toString()) {
+        setSelectedChat(prev => ({ ...prev, isOnline }));
+      }
+    };
+
+    // Register event listeners
+    socket.on("newMessage", handleNewMessage);
+    socket.on("messageDelivered", handleMessageDelivered);
+    socket.on("messagesRead", handleMessagesRead);
+    socket.on("onlineUsers", handleOnlineUsers);
+    socket.on("userOnline", handleUserOnline);
+    socket.on("userOffline", handleUserOffline);
+
+    // Get initial online users
     socket.emit("getOnlineUsers");
-    
+
     return () => {
       socket.off("newMessage", handleNewMessage);
-      socket.disconnect();
+      socket.off("messageDelivered", handleMessageDelivered);
+      socket.off("messagesRead", handleMessagesRead);
+      socket.off("onlineUsers", handleOnlineUsers);
+      socket.off("userOnline", handleUserOnline);
+      socket.off("userOffline", handleUserOffline);
+      disconnectSocket();
     };
-  }, [accessToken, currentUser.userId]);
+  }, [accessToken, currentUser.userId, selectedChat]);
 
-  // 3️⃣ Open a chat & load history
+  // Open a chat
   const handleSidebarSelect = useCallback(
     async chat => {
-      openChatRef.current = chat.userId;
+      openChatRef.current = chat.userId.toString();
       try {
-        const r = await svc.fetchMessages(chat.userId);
-        if (!r.data.success) throw new Error();
+        const res = await svc.fetchMessages(chat.userId);
+        if (!res.data.success) throw new Error("Failed to fetch messages");
         
-        // Map history
-        const msgs = r.data.messages.map(m => ({
+        // Map messages
+        const msgs = res.data.messages.map(m => ({
           _id: m._id,
           text: m.text,
           timestamp: m.timestamp,
           delivered: true,
           read: m.read || false,
-          sender: String(m.sender) === String(currentUser.userId) ? "me" : "them",
+          sender: m.sender.toString() === currentUser.userId ? "me" : "them",
         }));
         
-        // Get about info
-        const p = await api.get(`/users/${chat.userId}`);
-        const about = p.data.success ? p.data.user.about : "";
-
+        // Get user info
+        const profileRes = await api.get(`/users/${chat.userId}`);
+        const about = profileRes.data.success ? profileRes.data.user.about : "";
+        
         setSelectedChat({ 
           ...chat, 
           messages: msgs, 
           about,
-          isOnline: onlineUsers.has(chat.userId)
+          isOnline: onlineUsers.has(chat.userId.toString())
         });
         
-        // Clear unread badge
-        svc.markAsRead(chat.userId).catch(console.error);
-        setChatList(prev =>
-          prev.map(c =>
-            c.userId === chat.userId ? { ...c, unreadCount: 0 } : c
+        // Mark as read
+        await svc.markAsRead(chat.userId);
+        
+        // Reset unread count
+        setChatList(prev => 
+          prev.map(c => 
+            c.userId.toString() === chat.userId.toString() 
+              ? { ...c, unreadCount: 0 } 
+              : c
           )
         );
-      } catch (e) {
-        console.error(e);
+      } catch (error) {
+        console.error("Error opening chat:", error);
       }
     },
     [currentUser.userId, onlineUsers]
   );
 
-  // 4️⃣ Send message with optimistic UI update
+  // Send message
   const handleSendMessage = useCallback(
     text => {
       if (!selectedChat || !text.trim()) return;
       
       const tmpId = `tmp-${Date.now()}`;
       const now = new Date().toISOString();
+      
+      // Track temporary message
+      tmpMessageMap.current.set(tmpId, {
+        text,
+        timestamp: now
+      });
       
       // Optimistic UI update
       setSelectedChat(prev => ({
@@ -168,18 +298,41 @@ const ChatPage = () => {
       }));
       
       // Emit via socket
-      socketRef.current.emit("sendMessage", {
-        to: selectedChat.userId,
-        text,
-        tmpId  // Send temporary ID to match on echo
+      svc.sendMessageWS(
+        selectedChat.userId, 
+        text, 
+        tmpId // Pass temporary ID
+      );
+      
+      // Update chat list
+      setChatList(prev => {
+        const newList = [...prev];
+        const chatIndex = newList.findIndex(
+          c => c.userId.toString() === selectedChat.userId.toString()
+        );
+        
+        if (chatIndex !== -1) {
+          newList[chatIndex] = {
+            ...newList[chatIndex],
+            lastMessage: text,
+            timestamp: now,
+            unreadCount: 0
+          };
+          
+          // Move to top
+          const [updatedChat] = newList.splice(chatIndex, 1);
+          newList.unshift(updatedChat);
+        }
+        
+        return newList;
       });
     },
     [selectedChat]
   );
 
-  const enhanced = chatList.map(c => ({
+  const enhancedChatList = chatList.map(c => ({
     ...c,
-    isOnline: onlineUsers.has(c.userId),
+    isOnline: onlineUsers.has(c.userId.toString()),
   }));
 
   return (
@@ -187,7 +340,7 @@ const ChatPage = () => {
       <Navbar onUserSelect={handleSidebarSelect} />
       <div className="flex flex-1 overflow-hidden">
         <ChatSidebar
-          chatList={enhanced}
+          chatList={enhancedChatList}
           onSelectChat={handleSidebarSelect}
         />
         <ChatWindow
@@ -198,7 +351,7 @@ const ChatPage = () => {
           selectedChat={
             selectedChat && {
               ...selectedChat,
-              isOnline: onlineUsers.has(selectedChat.userId),
+              isOnline: onlineUsers.has(selectedChat.userId.toString()),
             }
           }
         />

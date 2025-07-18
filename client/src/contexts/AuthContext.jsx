@@ -1,62 +1,62 @@
-// src/contexts/AuthContext.jsx
-import React, {
-  createContext,
-  useContext,
-  useState,
-  useEffect,
-  useCallback,
-} from "react";
+import React, { createContext, useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import {jwtDecode} from "jwt-decode";
+import { jwtDecode } from "jwt-decode";
 import api from "../utils/api";
 
-const AuthContext = createContext();
+export const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
   const navigate = useNavigate();
-
-  // Load accessToken from localStorage if present
-  const [accessToken, setAccessToken] = useState(() =>
+  const [accessToken, setAccessToken] = useState(() => 
     localStorage.getItem("accessToken")
   );
   const [currentUser, setCurrentUser] = useState(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [refreshQueue, setRefreshQueue] = useState([]);
 
-  // Decode & validate token
-  const decodeAndSetUser = useCallback((t) => {
+  // Decode token and set user
+  const decodeAndSetUser = useCallback((token) => {
     try {
-      const { exp, userId, email } = jwtDecode(t);
-      if (Date.now() >= exp * 1000) return false;
+      const decoded = jwtDecode(token);
+      const { exp, userId, email } = decoded;
+      
+      if (Date.now() >= exp * 1000) {
+        return false;
+      }
+      
       setCurrentUser({ userId, email });
       return true;
-    } catch {
+    } catch (error) {
+      console.error("Token decode error:", error);
       return false;
     }
   }, []);
 
-  // login(accessToken): store + set state + decode
+  // Login function
   const login = useCallback(
-    (newAccessToken) => {
-      localStorage.setItem("accessToken", newAccessToken);
-      setAccessToken(newAccessToken);
-      if (!decodeAndSetUser(newAccessToken)) {
+    (token) => {
+      localStorage.setItem("accessToken", token);
+      setAccessToken(token);
+      if (!decodeAndSetUser(token)) {
         logout();
       }
     },
     [decodeAndSetUser]
   );
 
-  // logout
+  // Logout function
   const logout = useCallback(() => {
     localStorage.removeItem("accessToken");
     setAccessToken(null);
     setCurrentUser(null);
-    navigate("/login", { replace: true });
+    navigate("/login");
   }, [navigate]);
 
-  // Keep user in sync on load or token change
+  // Check token validity on mount
   useEffect(() => {
     if (accessToken) {
-      if (!decodeAndSetUser(accessToken)) {
+      const isValid = decodeAndSetUser(accessToken);
+      if (!isValid) {
         logout();
       }
     } else {
@@ -64,77 +64,92 @@ export const AuthProvider = ({ children }) => {
     }
   }, [accessToken, decodeAndSetUser, logout]);
 
-  // Refresh-on-401 logic
+  // Axios response interceptor
   useEffect(() => {
-    let isRefreshing = false;
-    let queue = [];
-
-    const processQueue = (err, newToken = null) => {
-      queue.forEach(({ resolve, reject }) => {
-        if (err) reject(err);
-        else resolve(newToken);
-      });
-      queue = [];
-    };
-
-    const reqI = api.interceptors.request.use(
-      (cfg) => {
-        if (accessToken) {
-          cfg.headers.Authorization = `Bearer ${accessToken}`;
+    const requestInterceptor = api.interceptors.request.use(
+      (config) => {
+        if (accessToken && !config.headers.Authorization) {
+          config.headers.Authorization = `Bearer ${accessToken}`;
         }
-        return cfg;
+        return config;
       },
-      (err) => Promise.reject(err)
+      (error) => Promise.reject(error)
     );
 
-    const resI = api.interceptors.response.use(
-      (res) => res,
-      async (err) => {
-        const orig = err.config;
-        if (err.response?.status === 401 && !orig._retry) {
-          orig._retry = true;
+    const responseInterceptor = api.interceptors.response.use(
+      (response) => response,
+      async (error) => {
+        const originalRequest = error.config;
+        
+        // Handle 401 errors
+        if (error.response?.status === 401 && !originalRequest._retry) {
+          originalRequest._retry = true;
+          
+          // If already refreshing, add to queue
           if (isRefreshing) {
-            return new Promise((res, rej) =>
-              queue.push({ resolve: res, reject: rej })
-            ).then((t) => {
-              orig.headers.Authorization = `Bearer ${t}`;
-              return api(orig);
-            });
+            return new Promise((resolve, reject) => {
+              refreshQueue.push({ resolve, reject });
+            })
+              .then((token) => {
+                originalRequest.headers.Authorization = `Bearer ${token}`;
+                return api(originalRequest);
+              })
+              .catch((err) => Promise.reject(err));
           }
-          isRefreshing = true;
+          
+          setIsRefreshing(true);
           try {
-            const r = await api.post("/users/token"); // ↔ correct endpoint
-            if (r.data.accessToken) {
-              login(r.data.accessToken);
-              processQueue(null, r.data.accessToken);
-              orig.headers.Authorization = `Bearer ${r.data.accessToken}`;
-              return api(orig);
+            const response = await api.post("/users/token");
+            const newToken = response.data.accessToken;
+            
+            if (newToken) {
+              login(newToken);
+              
+              // Process queued requests
+              refreshQueue.forEach(({ resolve }) => resolve(newToken));
+              setRefreshQueue([]);
+              
+              // Retry original request
+              originalRequest.headers.Authorization = `Bearer ${newToken}`;
+              return api(originalRequest);
+            } else {
+              throw new Error("No access token in refresh response");
             }
-          } catch (refreshErr) {
-            processQueue(refreshErr, null);
+          } catch (refreshError) {
+            // Process queued requests with error
+            refreshQueue.forEach(({ reject }) => reject(refreshError));
+            setRefreshQueue([]);
+            
             logout();
-            return Promise.reject(refreshErr);
+            return Promise.reject(refreshError);
           } finally {
-            isRefreshing = false;
+            setIsRefreshing(false);
           }
         }
-        return Promise.reject(err);
+        
+        return Promise.reject(error);
       }
     );
 
     return () => {
-      api.interceptors.request.eject(reqI);
-      api.interceptors.response.eject(resI);
+      api.interceptors.request.eject(requestInterceptor);
+      api.interceptors.response.eject(responseInterceptor);
     };
-  }, [accessToken, login, logout]);
+  }, [accessToken, isRefreshing, refreshQueue, login, logout]);
 
   return (
     <AuthContext.Provider
-      value={{ currentUser, accessToken, login, logout }}
+      value={{ 
+        accessToken, 
+        currentUser, 
+        login, 
+        logout,
+        isAuthenticated: !!currentUser
+      }}
     >
       {children}
     </AuthContext.Provider>
   );
 };
 
-export const useAuth = () => useContext(AuthContext);
+export const useAuth = () => React.useContext(AuthContext);
