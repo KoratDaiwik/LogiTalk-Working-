@@ -48,4 +48,5 @@ router.get("/profile", auth, ctrl.getProfile);
 router.get("/:id", auth, ctrl.getUserById);
 router.delete("/delete", auth, ctrl.deleteUser);
 router.put("/about", auth, userCtrl.updateAbout);
+
 module.exports = router;

@@ -20,7 +20,7 @@ const transporter = nodemailer.createTransport({
 module.exports = async function sendOtp(email, otp) {
   try {
     await transporter.sendMail({
-      from: `"LogiTalk Support" <${process.env.EMAIL_USER}>`,
+      from: `"LogiTalk Support by SHREE VALLABH" <${process.env.EMAIL_USER}>`,
       to: email,
       subject: "Your OTP Code",
       text: `Your OTP is ${otp}. It expires in 5 minutes.`,

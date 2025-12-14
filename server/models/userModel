@@ -6,7 +6,7 @@ const userSchema = new mongoose.Schema({
   password:     { type: String, required: true },
   status:       { type: String, default: "active" },
   avatar:       { type: String, default: "" },
-  about:        { type: String, default: "", maxlength: 200 },  // <-- added maxlength
+  about:        { type: String, default: "", maxlength: 200 }, 
   refreshToken: { type: String },
 });
 

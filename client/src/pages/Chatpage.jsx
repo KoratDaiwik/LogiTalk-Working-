@@ -1,7 +1,6 @@
-// src/pages/ChatPage.jsx
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useAuth } from "../contexts/AuthContext";
-import { connectSocket, disconnectSocket } from "../utils/socket";
+import { connectSocket, disconnectSocket, markMessagesRead } from "../utils/socket";
 import * as svc from "../services/chatService";
 import api from "../utils/api";
 
@@ -10,125 +9,188 @@ import ChatSidebar from "../components/ChatSidebar";
 import ChatWindow from "../components/ChatWindow";
 import UserProfile from "../components/UserProfile";
 
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:5000";
+
+// Helper to normalize avatar URLs
+const getAvatarUrl = (avatar) => {
+  if (avatar === null || avatar === undefined || avatar === "") return "/default-avatar.png";
+  if (typeof avatar === "number" || /^\d+$/.test(String(avatar))) {
+    const id = Number(avatar);
+    return `${BACKEND_URL.replace(/\/$/, "")}/assets/avatars/${id}.jpg`;
+  }
+  if (typeof avatar === "string" && /^https?:\/\//i.test(avatar)) return avatar;
+  if (typeof avatar === "string" && avatar.startsWith("/assets")) {
+    return `${BACKEND_URL.replace(/\/$/, "")}${avatar}`;
+  }
+  if (typeof avatar === "string") {
+    return avatar.startsWith("/") ? `${BACKEND_URL.replace(/\/$/, "")}${avatar}` : `${BACKEND_URL.replace(/\/$/, "")}/${avatar}`;
+  }
+  return "/default-avatar.png";
+};
+
 const ChatPage = () => {
   const { currentUser, accessToken } = useAuth();
+
   const [chatList, setChatList] = useState([]);
   const [selectedChat, setSelectedChat] = useState(null);
   const [onlineUsers, setOnlineUsers] = useState(new Set());
 
-  const socketRef = useRef();
-  const openChatRef = useRef(null);
-  const tmpMessageMap = useRef(new Map());           // tracks optimistic messages
-  const messageIdsRef = useRef(new Set());           // tracks displayed final IDs
+  const socketRef = useRef(null);
+  const activeChatIdRef = useRef(null); 
+  const processedMessageIds = useRef(new Set());
 
-  // 1) Load chat list
+  // 1. Load initial chat list
   useEffect(() => {
+    if (!accessToken || !currentUser?.userId) return;
+    let mounted = true;
     (async () => {
       try {
         const res = await svc.fetchChatList();
-        if (res.data.success) setChatList(res.data.chats);
+        if (mounted && res.data?.success) {
+          setChatList(res.data.chats || []);
+        }
       } catch (err) {
         console.error("Failed to load chats:", err);
       }
     })();
-  }, []);
+    return () => (mounted = false);
+  }, [accessToken, currentUser?.userId]);
 
-  // 2) Socket initialization
+  // 2. Sync SelectedChat with Online Status
   useEffect(() => {
-    if (!accessToken) return;
+    if (selectedChat) {
+      const isOnline = onlineUsers.has(String(selectedChat.userId));
+      if (selectedChat.isOnline !== isOnline) {
+        setSelectedChat((prev) => ({ ...prev, isOnline }));
+      }
+    }
+  }, [onlineUsers, selectedChat?.userId]);
+
+  // 3. Socket Initialization & Event Listeners
+  useEffect(() => {
+    if (!accessToken || !currentUser?.userId) return;
 
     const socket = connectSocket(accessToken);
     socketRef.current = socket;
 
-    const handleNewMessage = msg => {
-      // Dedupe final messages
-      if (messageIdsRef.current.has(msg._id)) return;
-      messageIdsRef.current.add(msg._id);
+    // --- MAIN FIX IS HERE ---
+    const handleNewMessage = (msg) => {
+      // Prevent duplicate processing by ID
+      if (msg._id && processedMessageIds.current.has(msg._id)) return;
+      if (msg._id) processedMessageIds.current.add(msg._id);
 
       const isMe = String(msg.sender) === String(currentUser.userId);
       const otherId = isMe ? msg.receiver : msg.sender;
-      const isOpen = openChatRef.current === otherId.toString();
+      const otherIdStr = String(otherId);
+      const isOpen = activeChatIdRef.current === otherIdStr;
 
-      // If it's an echo of our optimistic message, replace it
-      if (isMe && msg.tmpId && tmpMessageMap.current.has(msg.tmpId)) {
-        setSelectedChat(prev => {
-          if (!prev || prev.userId.toString() !== otherId.toString()) return prev;
-          return {
-            ...prev,
-            messages: prev.messages.map(m =>
-              m._id === msg.tmpId
-                ? {
-                    ...m,
-                    _id: msg._id,
-                    delivered: true,
-                    read: msg.read || false,
-                    timestamp: msg.timestamp
-                  }
-                : m
-            )
-          };
-        });
-        tmpMessageMap.current.delete(msg.tmpId);
-      } else {
-        // 2a) Update chat list ordering & unread count
-        setChatList(prev => {
-          const copy = [...prev];
-          const idx = copy.findIndex(c => c.userId.toString() === otherId.toString());
-          if (idx > -1) {
-            const chat = copy[idx];
-            chat.lastMessage = msg.text;
-            chat.timestamp   = msg.timestamp;
-            chat.unreadCount = isOpen ? 0 : (isMe ? 0 : (chat.unreadCount || 0) + 1);
-            copy.splice(idx, 1);
-            copy.unshift(chat);
-          } else {
-            copy.unshift({
-              userId: otherId,
-              name: msg.senderName || "Unknown",
-              avatar: msg.senderAvatar || "",
-              lastMessage: msg.text,
+      // Handle updating the chat window
+      if (isOpen) {
+        setSelectedChat((prev) => {
+          if (!prev || String(prev.userId) !== otherIdStr) return prev;
+
+          const msgs = [...prev.messages];
+          let foundMatch = false;
+
+          // DEDUPLICATION LOGIC:
+          // If message is from ME, check if we have a temporary message waiting
+          if (isMe) {
+            // Find index of a message that has a temporary ID AND matches the text
+            // This works even if the backend forgets to send back the 'tmpId'
+            const tmpIndex = msgs.findLastIndex(m => 
+                (m._id === msg.tmpId) || 
+                (String(m._id).startsWith('tmp-') && m.text === msg.text)
+            );
+
+            if (tmpIndex !== -1) {
+              // It's a match! Update the existing temporary message to the real one
+              msgs[tmpIndex] = {
+                ...msgs[tmpIndex],
+                _id: msg._id,
+                delivered: true,
+                timestamp: msg.timestamp
+              };
+              foundMatch = true;
+            }
+          }
+
+          // If no temporary match was found (or it's from the other person), add as new
+          if (!foundMatch) {
+            msgs.push({
+              _id: msg._id || `rcv-${Date.now()}`,
+              text: msg.text,
               timestamp: msg.timestamp,
-              unreadCount: isMe ? 0 : 1,
-              isOnline: onlineUsers.has(otherId.toString())
+              delivered: true,
+              read: msg.read || false,
+              sender: isMe ? "me" : "them",
             });
           }
-          return copy;
+
+          return { ...prev, messages: msgs };
         });
 
-        // 2b) If chat window open, append message
-        if (isOpen) {
-          setSelectedChat(prev => {
-            if (!prev || prev.userId.toString() !== otherId.toString()) return prev;
-            return {
-              ...prev,
-              messages: [
-                ...prev.messages,
-                {
-                  _id:        msg._id,
-                  text:       msg.text,
-                  timestamp:  msg.timestamp,
-                  delivered:  true,
-                  read:       msg.read || false,
-                  sender:     isMe ? "me" : "them"
-                }
-              ]
-            };
-          });
-          if (!isMe) svc.markAsRead(otherId).catch(console.error);
+        // If I received it and chat is open, mark as read
+        if (!isMe) {
+          markMessagesRead(otherId);
         }
       }
+
+      // Handle Chat List Sidebar Updates
+      setChatList((prev) => {
+        const copy = [...prev];
+        const idx = copy.findIndex((c) => String(c.userId) === otherIdStr);
+        
+        let chatEntry;
+        if (idx > -1) {
+          chatEntry = { ...copy[idx] };
+          copy.splice(idx, 1); 
+        } else {
+          chatEntry = {
+            userId: otherId,
+            name: msg.senderName || "Unknown",
+            avatar: msg.senderAvatar || "",
+            unreadCount: 0,
+            isOnline: false 
+          };
+        }
+
+        chatEntry.lastMessage = msg.text;
+        chatEntry.timestamp = msg.timestamp;
+        
+        if (isMe) {
+            chatEntry.unreadCount = 0;
+        } else if (isOpen) {
+            chatEntry.unreadCount = 0;
+        } else {
+            chatEntry.unreadCount = (chatEntry.unreadCount || 0) + 1;
+        }
+
+        copy.unshift(chatEntry);
+        return copy;
+      });
     };
 
-    const handleOnlineUsers = list    => setOnlineUsers(new Set(list));
-    const handleUserOnline  = id      => setOnlineUsers(prev => new Set(prev).add(id));
-    const handleUserOffline = id      => setOnlineUsers(prev => {
-      const nxt = new Set(prev); nxt.delete(id); return nxt;
-    });
+    const handleOnlineUsers = (list) => {
+      setOnlineUsers(new Set(list.map(String)));
+    };
+
+    const handleUserOnline = (userId) => {
+      setOnlineUsers((prev) => new Set(prev).add(String(userId)));
+    };
+
+    const handleUserOffline = (userId) => {
+      setOnlineUsers((prev) => {
+        const next = new Set(prev);
+        next.delete(String(userId));
+        return next;
+      });
+    };
 
     socket.on("newMessage", handleNewMessage);
     socket.on("onlineUsers", handleOnlineUsers);
     socket.on("userOnline", handleUserOnline);
     socket.on("userOffline", handleUserOffline);
+    
     socket.emit("getOnlineUsers");
 
     return () => {
@@ -138,75 +200,102 @@ const ChatPage = () => {
       socket.off("userOffline", handleUserOffline);
       disconnectSocket();
     };
-  }, [accessToken, currentUser.userId, onlineUsers]);
+  }, [accessToken, currentUser?.userId]);
 
-  // 3) Open chat & fetch history
-  const handleSidebarSelect = useCallback(async chat => {
-    openChatRef.current = chat.userId.toString();
+  // 4. Handle selecting a chat
+  const handleSidebarSelect = useCallback(async (chat) => {
+    if (!currentUser?.userId) return;
+    
+    const targetUserIdStr = String(chat.userId);
+    activeChatIdRef.current = targetUserIdStr; 
+
+    setSelectedChat({
+      userId: chat.userId,
+      name: chat.name || "Unknown",
+      avatar: chat.avatar,
+      messages: [], 
+      about: "",
+      isOnline: onlineUsers.has(targetUserIdStr)
+    });
+
     try {
       const r = await svc.fetchMessages(chat.userId);
-      if (!r.data.success) throw new Error("Fetch failed");
+      if (r.data?.success) {
+        const msgs = (r.data.messages || []).map((m) => ({
+          _id: m._id,
+          text: m.text,
+          timestamp: m.timestamp,
+          delivered: true,
+          read: m.read || false,
+          sender: String(m.sender) === String(currentUser.userId) ? "me" : "them",
+        }));
 
-      const msgs = r.data.messages.map(m => ({
-        _id:       m._id,
-        text:      m.text,
-        timestamp: m.timestamp,
-        delivered: true,
-        read:      m.read || false,
-        sender:    String(m.sender) === String(currentUser.userId) ? "me" : "them"
-      }));
+        let about = "";
+        let avatarRaw = chat.avatar;
+        try {
+            const pr = await api.get(`/users/${chat.userId}`);
+            if(pr.data?.success?.user) {
+                about = pr.data.user.about;
+                if(!avatarRaw) avatarRaw = pr.data.user.avatar;
+            }
+        } catch(e) { console.warn("Profile fetch error", e); }
 
-      const pr = await api.get(`/users/${chat.userId}`);
-      const about = pr.data.success ? pr.data.user.about : "";
+        setSelectedChat(prev => {
+            if (activeChatIdRef.current !== targetUserIdStr) return prev;
+            return {
+                ...prev,
+                avatar: avatarRaw, 
+                messages: msgs,
+                about
+            };
+        });
 
-      setSelectedChat({
-        ...chat,
-        messages: msgs,
-        about,
-        isOnline: onlineUsers.has(chat.userId.toString())
-      });
+        await svc.markAsRead(chat.userId);
 
-      await svc.markAsRead(chat.userId);
-      setChatList(prev =>
-        prev.map(c =>
-          c.userId.toString() === chat.userId.toString()
-            ? { ...c, unreadCount: 0 }
-            : c
-        )
-      );
+        setChatList(prev => prev.map(c => 
+            String(c.userId) === targetUserIdStr ? { ...c, unreadCount: 0 } : c
+        ));
+      }
     } catch (err) {
       console.error("Open chat error:", err);
     }
-  }, [currentUser.userId, onlineUsers]);
+  }, [currentUser?.userId, onlineUsers]);
 
-  // 4) Send message
-  const handleSendMessage = useCallback(text => {
+  // 5. Handle Sending Message
+  const handleSendMessage = useCallback((text) => {
     if (!selectedChat || !text.trim()) return;
 
     const tmpId = `tmp-${Date.now()}`;
-    const now   = new Date().toISOString();
-    tmpMessageMap.current.set(tmpId, true);
+    const now = new Date().toISOString();
 
-    // Optimistic update
-    setSelectedChat(prev => ({
+    // Optimistically add to Chat Window
+    setSelectedChat((prev) => ({
       ...prev,
       messages: [
-        ...prev.messages,
-        { _id: tmpId, text, sender: "me", timestamp: now, delivered: false, read: false }
-      ]
+        ...(prev?.messages || []),
+        {
+          _id: tmpId,
+          text,
+          sender: "me",
+          timestamp: now,
+          delivered: false,
+          read: false,
+        },
+      ],
     }));
 
-    // Emit to server (with tmpId)
+    // Send via Socket
     svc.sendMessageWS(selectedChat.userId, text, tmpId);
 
-    // Also bump this chat to top
-    setChatList(prev => {
+    // Update Sidebar immediately
+    setChatList((prev) => {
       const copy = [...prev];
-      const idx  = copy.findIndex(c => c.userId.toString() === selectedChat.userId.toString());
+      const idx = copy.findIndex((c) => String(c.userId) === String(selectedChat.userId));
       if (idx > -1) {
-        const c = copy[idx];
+        const c = { ...copy[idx] };
         c.lastMessage = text;
-        c.timestamp   = now;
+        c.timestamp = now;
+        c.unreadCount = 0; 
         copy.splice(idx, 1);
         copy.unshift(c);
       }
@@ -214,10 +303,22 @@ const ChatPage = () => {
     });
   }, [selectedChat]);
 
-  const enhancedChatList = chatList.map(c => ({
-    ...c,
-    isOnline: onlineUsers.has(c.userId.toString())
-  }));
+  // 6. Memoized Chat List
+  const enhancedChatList = useMemo(() => {
+    return chatList.map((c) => ({
+      ...c,
+      isOnline: onlineUsers.has(String(c.userId)),
+      avatarUrl: getAvatarUrl(c.avatar),
+    }));
+  }, [chatList, onlineUsers]);
+
+  if (!currentUser) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="text-gray-600">Please log in to continue...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-screen bg-gray-50">
@@ -225,7 +326,7 @@ const ChatPage = () => {
       <div className="flex flex-1 overflow-hidden">
         <ChatSidebar chatList={enhancedChatList} onSelectChat={handleSidebarSelect} />
         <ChatWindow selectedChat={selectedChat} onSendMessage={handleSendMessage} />
-        <UserProfile selectedChat={selectedChat && { ...selectedChat }} />
+        <UserProfile selectedChat={selectedChat} />
       </div>
     </div>
   );
